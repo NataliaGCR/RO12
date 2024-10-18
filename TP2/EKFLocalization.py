@@ -70,7 +70,7 @@ class Simulation:
         # Model
         if k*self.dt_pred % self.dt_meas == 0:
             notValidCondition = False # False: measurement valid / True: measurement not valid
-            # notValidCondition = (2500 <= k*self.dt_pred <= 3500)
+            #notValidCondition = (2500 <= k*self.dt_pred <= 3500)
             if notValidCondition:
                 z = None
                 iFeature = None
@@ -93,13 +93,13 @@ def motion_model(x, u, dt_pred):
     # x: estimated state (x, y, heading)
     # u: control input or odometry measurement in body frame (Vx, Vy, angular rate)
     
-    xPred = np.zeros((3, 1))
-    xPred[0, 0] = x[0, 0] + u[0, 0] * dt_pred * cos(x[2, 0]) # x = x + Vx * dt * cos(theta)
-    xPred[1, 0] = x[1, 0] + u[0, 0] * dt_pred * sin(x[2, 0]) # y = y + Vx * dt * sin(theta)
-    xPred[2, 0] = x[2, 0] + u[2, 0] * dt_pred # theta = theta + omega * dt
+    xPred = np.zeros((3, 1))  # Initialiser l'état prédit
 
-    xPred[2, 0] = angle_wrap(xPred[2, 0]) # ensure angle is between -pi and pi
-    
+    xPred[0] = x[0].item() + (u[0].item() * cos(x[2].item()) - u[1].item() * sin(x[2].item())) * dt_pred
+    xPred[1] = x[1].item() + (u[0].item() * sin(x[2].item()) + u[1].item() * cos(x[2].item())) * dt_pred
+    xPred[2] = x[2].item() + u[2].item() * dt_pred
+
+    xPred[2, 0] = angle_wrap(xPred[2, 0]) 
     return xPred
 
 
@@ -131,24 +131,15 @@ def get_obs_jac(xPred, iFeature, Map):
     # Difference between x coordenate of the robot and characteristic
     dx = Map[0, iFeature] - xPred[0, 0] 
     dy = Map[1, iFeature] - xPred[1, 0]
-    q = dx**2 + dy**2
+    q = sqrt(dx ** 2 + dy ** 2)
     
     # jH is a 2x3 matrix containing the partial derivatives of the observation function with respect to the robot’s state variables.
     jH = np.zeros((2, 3)) # It will conatiane the partial derivates of the observation's function respect the robot's state
     
-    # Partial distance (first observation) with respect to the robot’s coordinates. The observation 
-    # function is a measure of distance, and these entries describe how that distance changes with respect to x and y.
-    jH[0, 0] = -dx / sqrt(q)
-    jH[0, 1] = -dy / sqrt(q)
-
-    # Partial angle derivatives (second observation) with respect to the robot coordinates. Describe how 
-    # the observation angle changes if the robot moves on the x or y axis.
-    jH[1, 0] = dy / q
-    jH[1, 1] = -dx / q
-
-    # Derived from angle with respect to robot orientation (θ). Negative because an increase in the robot angle reduces the 
-    # observed angle towards the feature. 
-    jH[1, 2] = -1
+    jH = np.array([
+        [-dx / q, -dy / q, 0],  # Pour rk
+        [dy / (dx ** 2 + dy ** 2), -dx / (dx ** 2 + dy ** 2), -1]  # Pour phik
+    ])
 
     return jH
 
@@ -163,10 +154,15 @@ def F(x, u, dt_pred):
     # u: control input (Vx, Vy, angular rate)
     # dt_pred: time step
     
-    theta = x[2, 0]
+    theta = x[2, 0].item()
     Jac = np.eye(3)
-    Jac[0, 2] = -u[0, 0] * dt_pred * sin(theta)
-    Jac[1, 2] = u[0, 0] * dt_pred * cos(theta)
+    u0 = u[0, 0].item() 
+    u1 = u[1, 0].item() 
+    Jac = np.array([
+        [1, 0, - u0 * sin(theta) * dt_pred - u1 * cos(theta) * dt_pred],
+        [0, 1, u0 * cos(theta) * dt_pred - u1 * sin(theta) * dt_pred],
+        [0, 0, 1]
+    ])
 
     return Jac
 
@@ -180,14 +176,12 @@ def G(x, u, dt_pred):
     # u: control input (Vx, Vy, angular rate) in robot frame
     # dt_pred: time step for prediction
     
-    theta = x[2, 0]
-    Jac = np.zeros((3, 3))
-    Jac[0, 0] = dt_pred * cos(theta)
-    Jac[0, 1] = -dt_pred * sin(theta)
-    Jac[1, 0] = dt_pred * sin(theta)
-    Jac[1, 1] = dt_pred * cos(theta)
-    Jac[2, 2] = dt_pred
-
+    theta = x[2, 0].item()  # Angle
+    Jac = np.array([
+        [dt_pred * cos(theta), - dt_pred * sin(theta), 0],
+        [dt_pred * sin(theta),  dt_pred * cos(theta), 0],
+        [0, 0, dt_pred]  
+    ])
     return Jac
 
 
@@ -273,7 +267,7 @@ dt_pred = 1     # Time between two dynamical predictions (s)
 dt_meas = 1    # Time between two measurement updates (s)
 
 # Location of landmarks
-nLandmarks = 50
+nLandmarks = 30
 Map = 140*(np.random.rand(2, nLandmarks) - 1/2)
 
 # True covariance of errors used for simulating robot movements
@@ -336,7 +330,7 @@ for k in range(1, simulation.nSteps):
         # Compute Kalman gain to use only distance
         # Innov = z[0:1, :] - zPred[0:1, :]  # observation error (innovation)
         # H = H[0:1, :]
-        # S = H @ PPred @ H.T + simulation.RTrue[0:1, 0:1]
+        # S = H @ PPred @ H.T + REst[0:1, 0:1]
         # K = PPred @ H.T @ np.linalg.inv(S)
 
         # Compute Kalman gain to use only direction
