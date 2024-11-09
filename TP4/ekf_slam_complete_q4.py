@@ -317,13 +317,10 @@ def ekf_slam(xEst, PEst, u, y, landmark_vote):
         else:
             min_id = search_correspond_landmark_id(xEst, PEst, y[iy, 0:2])
 
-
-        # Extend map if required
         if min_id == nLM:
             print("New LM")
 
             for i in range(Landmark_points):
-                # Extend state and covariance matrix
                 y[iy, 0] = 3 + i*2
                 xEst = np.vstack((xEst, calc_landmark_position(xEst, y[iy, :])))
 
@@ -335,31 +332,27 @@ def ekf_slam(xEst, PEst, u, y, landmark_vote):
                                 Jr @ PEst[0:3, 0:3] @ Jr.T + Jy @ Py @ Jy.T))))
 
         else:
-            # Perform Kalman update
             innov, S, H = calc_innovation(xEst, PEst, y[iy, 0:2], min_id)
             K = (PEst @ H.T) @ np.linalg.inv(S)
             
             xEst = xEst + (K @ innov)
                         
             PEst = (np.eye(len(xEst)) - K @ H) @ PEst
-            PEst = 0.5 * (PEst + PEst.T)  # Ensure symetry
+            PEst = 0.5 * (PEst + PEst.T)
             landmark_vote[min_id] += 1
 
-            # verify if needs to delete points
             percentage = landmark_vote/np.max(landmark_vote)
             print("percent ",percentage)
             print("landmark vote ",landmark_vote)
                     
             for i in range(len(landmark_vote)):
                 if percentage[i] < 0.4 and np.sum(landmark_vote) > 30:
-                    # needs to remove a point
                     print("xEst ",xEst.shape," xEst ",xEst)
                     PEst = np.delete(PEst,[3+2*i,4+2*i], axis=0)
                     PEst = np.delete(PEst,[3+2*i,4+2*i], axis=1)
                     xEst = np.delete(xEst,[3+2*i,4+2*i], axis=0)
                     landmark_vote = np.delete(landmark_vote,i)
                     i -= 1
-                    #landmark_vote = np.delete(landmark_vote,i,axis=0)
 
         
     xEst[2] = pi_2_pi(xEst[2])
